@@ -51,8 +51,8 @@
 ## 从源码构建
 
 ```
-git clone https://github.com/你的用户名/proxy-hotspot-share
-cd proxy-hotspot-share
+git clone https://github.com/NormanFxxkingRockwell/share-proxy.git
+cd share-proxy
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
