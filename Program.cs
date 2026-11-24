@@ -37,7 +37,10 @@ namespace ProxyShareApp {
       Lang = Lang == "zh" ? "en" : "zh";
       Save();
     }
-    static void Save() {
+    public static void SetLang(string l) {
+      if (l == "zh" || l == "en") { Lang = l; Save(); }
+    }
+    public static void Save() {
       try {
         using (RegistryKey k = Registry.CurrentUser.CreateSubKey("Software\\ProxyHotspotShare")) {
           if (k != null) k.SetValue("Lang", Lang);
@@ -362,7 +365,7 @@ namespace ProxyShareApp {
 
   class MainForm : Form {
     Label lblState, lblShareSrc, lblUpstream, lblProxy, lblSysProxy, lblSpeed;
-    Button btnToggle, btnSave, btnLang;
+    Button btnToggle, btnSave;
     TextBox txtSsid, txtPass;
     GroupBox grpHotspot, grpNet, grpDevices;
     ListView lvDevices;
@@ -374,6 +377,7 @@ namespace ProxyShareApp {
     ContextMenuStrip trayMenu;
     ToolStripMenuItem miOpen, miToggle, miExitKeep, miExitStop;
     Label lName, lPass;
+    LinkLabel lblLang;
 
     bool desiredOn = true;
     bool busy = false;
@@ -414,10 +418,10 @@ namespace ProxyShareApp {
       grpHotspot = new GroupBox();
       grpHotspot.Location = new System.Drawing.Point(12, 78);
       grpHotspot.Size = new System.Drawing.Size(512, 68);
-      lName = MkLabel(12, 27, 46, 20, 9F, false); grpHotspot.Controls.Add(lName);
+      lName = MkLabel(12, 27, 46, 20, 9F, false); lName.AutoSize = true; grpHotspot.Controls.Add(lName);
       txtSsid = new TextBox(); txtSsid.Location = new System.Drawing.Point(58, 23); txtSsid.Width = 120;
       txtSsid.TextChanged += new EventHandler(MarkDirty); grpHotspot.Controls.Add(txtSsid);
-      lPass = MkLabel(192, 27, 40, 20, 9F, false); grpHotspot.Controls.Add(lPass);
+      lPass = MkLabel(192, 27, 40, 20, 9F, false); lPass.AutoSize = true; grpHotspot.Controls.Add(lPass);
       txtPass = new TextBox(); txtPass.Location = new System.Drawing.Point(234, 23); txtPass.Width = 120;
       txtPass.TextChanged += new EventHandler(MarkDirty); grpHotspot.Controls.Add(txtPass);
       btnSave = new Button();
@@ -454,12 +458,16 @@ namespace ProxyShareApp {
       chkAuto.Location = new System.Drawing.Point(330, 540); chkAuto.Size = new System.Drawing.Size(110, 22);
       chkAuto.CheckedChanged += new EventHandler(OnAutoStartChanged);
       Controls.Add(chkAuto);
-      btnLang = new Button();
-      btnLang.Text = "语言/Lang";
-      btnLang.Location = new System.Drawing.Point(444, 537);
-      btnLang.Size = new System.Drawing.Size(82, 26);
-      btnLang.Click += new EventHandler(OnLangToggle);
-      Controls.Add(btnLang);
+      lblLang = new LinkLabel();
+      lblLang.AutoSize = true;
+      lblLang.Location = new System.Drawing.Point(446, 542);
+      lblLang.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
+      lblLang.ForeColor = Color.FromArgb(110, 110, 110);
+      lblLang.LinkColor = Color.FromArgb(46, 120, 220);
+      lblLang.ActiveLinkColor = Color.FromArgb(46, 120, 220);
+      lblLang.LinkBehavior = LinkBehavior.HoverUnderline;
+      lblLang.LinkClicked += new LinkLabelLinkClickedEventHandler(OnLangClick);
+      Controls.Add(lblLang);
 
       status = new StatusStrip();
       lblMsg = new ToolStripStatusLabel();
@@ -503,13 +511,43 @@ namespace ProxyShareApp {
       grpNet.Text = I18N.T("网络与代理状态", "Network & proxy status");
       chkKeep.Text = I18N.T("掉线自动重开（防 5 分钟无设备自动关）", "Auto-restart (prevent Windows auto-off)");
       chkAuto.Text = I18N.T("开机自启", "Start with Windows");
-      btnLang.Text = "语言/Lang";
       miOpen.Text = I18N.T("打开主界面(&O)", "Open(&O)");
       miExitKeep.Text = I18N.T("退出（保持热点）", "Exit (keep hotspot)");
       miExitStop.Text = I18N.T("退出并关闭热点", "Exit & stop hotspot");
       ni.Text = I18N.T("共享代理", "Proxy Hotspot");
+      RebuildLangLink();
+      RepositionEdits();
       RebuildColumns();
       RefreshAll();
+    }
+
+    // 名称/密码标签随语言自适应宽度（"Password:" 比「密码:」长，需动态排版）
+    void RepositionEdits() {
+      int x = 12;
+      lName.Location = new System.Drawing.Point(x, 28);
+      txtSsid.Width = 88;
+      txtSsid.Location = new System.Drawing.Point(x + lName.Width + 8, 23);
+      int x2 = txtSsid.Right + 16;
+      lPass.Location = new System.Drawing.Point(x2, 28);
+      txtPass.Location = new System.Drawing.Point(x2 + lPass.Width + 8, 23);
+      txtPass.Width = btnSave.Left - txtPass.Location.X - 12;
+    }
+
+    // 「中文 | EN」：当前语言灰色，另一个是可点链接
+    void RebuildLangLink() {
+      lblLang.Text = "中文 | EN";
+      lblLang.Links.Clear();
+      if (I18N.Lang == "zh") lblLang.Links.Add(5, 2);
+      else lblLang.Links.Add(0, 2);
+    }
+
+    void OnLangClick(object s, LinkLabelLinkClickedEventArgs e) {
+      int off = (e.Link == null) ? 5 : e.Link.Start;
+      string target = off == 0 ? "zh" : "en";
+      if (target == I18N.Lang) return;
+      I18N.SetLang(target);
+      Log.Write("language -> " + I18N.Lang);
+      RebuildTexts();
     }
 
     void RebuildColumns() {
@@ -518,13 +556,6 @@ namespace ProxyShareApp {
       lvDevices.Columns[2].Text = I18N.T("状态", "Status");
     }
 
-    void OnLangToggle(object s, EventArgs e) {
-      I18N.Toggle();
-      Log.Write("language -> " + I18N.Lang);
-      RebuildTexts();
-      LoadCurrentConfig();
-      SetStatus(I18N.T("已切换语言", "Language switched"));
-    }
 
     void BuildTray() {
       trayMenu = new ContextMenuStrip();
@@ -820,6 +851,21 @@ namespace ProxyShareApp {
     }
 
     static readonly int[] ProbePorts = { 7890, 7897, 7891, 17891, 2080, 1080, 10808 };
+    static int _alivePort = 0;
+    static DateTime _probeAt = DateTime.MinValue;
+    static void ProbePortsAsync() {
+      try {
+        if ((DateTime.Now - _probeAt).TotalSeconds < 3) return;
+        _probeAt = DateTime.Now;
+        Task.Run(new Action(delegate {
+          int p = 0;
+          foreach (int pp in ProbePorts) {
+            if (TcpProbe("127.0.0.1", pp, 300)) { p = pp; break; }
+          }
+          _alivePort = p;
+        }));
+      } catch { }
+    }
 
     void UpdateNetInfo() {
       try {
@@ -872,10 +918,8 @@ namespace ProxyShareApp {
           if (sv != null) server = sv.ToString();
         } catch { }
         if (enable == 1 && !string.IsNullOrEmpty(server)) sysProxy = server;
-        int alivePort = 0;
-        foreach (int pp in ProbePorts) {
-          if (TcpProbe("127.0.0.1", pp, 200)) { alivePort = pp; break; }
-        }
+        ProbePortsAsync();
+        int alivePort = _alivePort;
         lblSysProxy.Text = I18N.F("系统代理：{0} · 本地核心端口：{1}", "System proxy: {0} · local core port: {1}", sysProxy,
           alivePort > 0 ? I18N.F("{0} 活跃 ✔", "{0} active ✔", alivePort)
                         : I18N.T("未监听（无代理或非默认端口）", "not listening (no proxy / non-default port)"));
