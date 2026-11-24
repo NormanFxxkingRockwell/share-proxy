@@ -40,6 +40,23 @@
 
 Yes. Hotspot sharing itself is the core feature: egress selection is *TUN proxy first → current internet connection as fallback*. Without a proxy the UI marks the state in **gray** ("not detected, sharing direct connection") and the hotspot works normally — e.g. share a wired desktop connection to your phone.
 
+## How is this different from the built-in Mobile Hotspot?
+
+Under the hood it's the same hotspot (same WinRT tethering API, same configuration the Settings app edits). The difference is the automation and visibility layer on top:
+
+| | Built-in (Settings → Mobile hotspot) | This tool |
+|---|---|---|
+| Shared connection | Manual dropdown; **TUN/virtual adapters often don't show up** (fake-IP adapters like Clash TUN lack a standard connectivity verdict), and a selection breaks silently when the adapter is recreated | Auto-prefers the TUN proxy adapter, **re-evaluates every 3 s** — reloads/reconnects that recreate the TUN adapter are re-bound automatically |
+| Recovery after drop | None — adapter resets, sleep/wake or TUN rebuilds leave it off | Auto re-arms within ~6 s, logged |
+| "Auto-off after 5 idle minutes" | On by default (there is a hidden toggle, but even then resets can kill it) | Actively fought by keep-alive |
+| After reboot | Usually needs manual re-enabling | Autostart + share-on-launch, deterministic |
+| Proxy awareness | None | TUN detection / system proxy / core port probe / live throughput — confirm "traffic is really going through the tunnel" at a glance |
+| Device list | Exists inside Settings (several clicks deep) | Always-visible panel + join toast, IP + MAC, 2 s refresh |
+| Access path | Win11 quick panel: two steps | Tray right-click: one step; re-launch the exe to reopen |
+| What the built-in does better | Band selection (2.4/5 GHz), Bluetooth sharing, friendly device names | Not exposed yet — PRs welcome |
+
+Fair summary: if you don't run a proxy, the built-in hotspot is fine and you don't need this. Its audience is TUN proxy users (Clash / mihomo / sing-box) who want three annoyances gone — *can't pick the TUN adapter / hotspot breaks when the proxy reloads / Windows turns it off by itself* — plus a live panel proving the proxy is working.
+
 ## Technical notes
 
 - **Zero-dependency single exe**: .NET Framework 4.x (in-box on Win10/11) + WinForms, ~58 KB
