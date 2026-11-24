@@ -1,54 +1,53 @@
-# Proxy Hotspot Share · 共享代理
+# Proxy Hotspot Share
 
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)](#) [![Dependency](https://img.shields.io/badge/dependency-zero-46A043)](#) [![Size](https://img.shields.io/badge/exe-%3C60KB-orange)](#)
+**English** | [简体中文](README.zh-CN.md)
 
-> 一键把（代理）网络共享成 WiFi 热点 —— 单文件、零依赖、免安装的 Windows 小工具。
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)](#) [![Dependency](https://img.shields.io/badge/dependency-zero-46A043)](#) [![Size](https://img.shields.io/badge/exe-%3C60KB-orange)](#) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**English in short:** a tiny (~55 KB) single-file Windows utility that shares your internet connection (with **TUN-mode proxy preferred**) as a WiFi hotspot. Double-click → sharing starts. Tray-resident, auto keep-alive, live device list, live proxy status. No proxy installed? It still shares your normal connection and marks proxy status in gray. .NET Framework 4.x (in-box on Win10/11), built with the in-box C# compiler — nothing to install.
+> One click to share your internet connection as a WiFi hotspot — with **TUN-mode proxy preferred**. A tiny (~58 KB), single-file, zero-dependency Windows tray app.
 
-![screenshot](docs/screenshot.png)
+## Why
 
-## 为什么需要它
+- You run Clash / mihomo / sing-box (TUN mode) on your PC and want your phone or other devices to **go through the proxy with zero configuration** — connect to this hotspot and traffic is NAT'ed straight into the TUN tunnel
+- Windows' built-in Mobile Hotspot **auto-turns-off after ~5 minutes without clients**, has no device list, and no keep-alive; `netsh wlan start hostednetwork` is dead on modern drivers
+- Existing tools are tens of MB, paid, or install resident services. This is one 58 KB exe running on the in-box .NET runtime — close it and it's gone
 
-- 你在电脑上跑 Clash / mihomo / sing-box（TUN 模式），想让手机**免配置直接走代理**——连上这个热点就行，流量经 ICS NAT 全部进入 TUN 隧道
-- Windows 自带的「移动热点」会**在没有设备 5 分钟后自动关闭**、没有设备列表、没有掉线重开；用 `netsh wlan start hostednetwork`？新驱动普遍不再支持 hosted network，这条路已经死了
-- 现成工具要么几十 MB、要么收费、要么内核服务常驻。这个 55 KB 单 exe，用系统自带 .NET 运行，关掉就干净
+## Features
 
-## 功能
-
-| 功能 | 说明 |
+| Feature | Notes |
 |---|---|
-| 双击即共享 | 启动自动开启热点；共享源**优先绑定 TUN 代理网卡**（Clash/mihomo/sing-box/0dcloud 等），无代理则共享当前联网连接 |
-| 一键开关 | 窗口按钮 / 托盘右键，均可 |
-| 热点名/密码 | 随时修改，运行中保存即自动重启热点生效 |
-| 网络状态 | 上游 WiFi（SSID/信号/IP）、代理 TUN 网卡状态、系统代理、本地核心端口探活（7890/7897/7891/17891…） |
-| 实时吞吐 | TUN 网卡上下行速率与累计流量 |
-| 设备列表 | 连接热点的设备 IP + MAC（ARP 实时扫描，子网自适应），设备接入气泡通知 |
-| 托盘常驻 | 点 X 只隐藏不退出（热点与保活继续）；再双击 exe 直接唤出窗口 |
-| 掉线自动重开 | 专治 Windows「无设备 5 分钟自动关闭热点」 |
-| 开机自启 | 当前用户注册表 Run 键，不需要管理员 |
+| Share on launch | Hotspot starts automatically; egress **prefers the TUN proxy adapter** (Clash / mihomo / sing-box / 0dcloud …), falls back to the current internet connection |
+| One-click toggle | Main window button or tray right-click menu |
+| SSID & password | Edit anytime; saving while running restarts the hotspot to apply immediately |
+| Network status | Upstream WiFi (SSID / signal / IP), proxy TUN adapter state, system proxy, local core port probe (7890 / 7897 / 7891 / 17891 …) |
+| Throughput | Live TUN adapter up/down rates and totals |
+| Device list | Live IP + MAC of connected clients (raw ARP table + subnet auto-detect), balloon toast on join |
+| Tray-resident | X only hides to tray (hotspot & keep-alive keep running); re-launch the exe to bring the window back |
+| Auto re-arm | Defeats the "no clients for 5 min → auto-off" behavior |
+| Start with Windows | Per-user Run key, no admin required |
+| i18n | UI follows OS language (中文 / English), in-app toggle, choice remembered |
 
-## 下载使用
+## Download
 
-1. 到 [Releases](../../releases) 下载 `ProxyHotspotShare.exe`（单文件）
-2. 双击运行 → 自动开始共享
-3. 手机连热点（名称/密码见界面），流量即走代理（若电脑在跑 TUN 代理）
+1. Grab `ProxyHotspotShare.exe` from [Releases](../../releases) — single file
+2. Double-click → sharing starts
+3. Connect your device to the hotspot (name & password shown in the window); traffic goes through the proxy if one is running in TUN mode
 
-> Windows SmartScreen 可能提示「未知发布者」——点「仍要运行」即可（未签名二进制的正常提示）。
-> 程序同目录的 `share.log` 是运行日志，出问题时把它带上提 issue。
+> SmartScreen may show an "unknown publisher" warning — normal for unsigned binaries, choose "Run anyway".
+> `share.log` next to the exe is the diagnostic log (entries are in Chinese); attach it when filing an issue.
 
-## 没装代理也能用吗？
+## Does it work without a proxy?
 
-能。热点共享本身就是功能：共享源选择逻辑是 *优先 TUN 代理 → 回退当前联网连接*。没检测到代理时，界面以**灰色**标注「未检测到代理（将共享直连网络）」，热点照常工作——台式机插网线给手机发 WiFi 的场景完全适用。
+Yes. Hotspot sharing itself is the core feature: egress selection is *TUN proxy first → current internet connection as fallback*. Without a proxy the UI marks the state in **gray** ("not detected, sharing direct connection") and the hotspot works normally — e.g. share a wired desktop connection to your phone.
 
-## 技术要点（值得一看）
+## Technical notes
 
-- **零依赖单 exe**：.NET Framework 4.x（Win10/11 内置）+ WinForms，55 KB
-- **WinRT 完全运行时加载**：控制 Windows 移动热点的 `NetworkOperatorTetheringManager` 属 WinRT API；本项目不引用任何 winmd，全部通过 `Type.GetType("..., ContentType=WindowsRuntime")` + `dynamic` + 反射调用 `WindowsRuntimeSystemExtensions.AsTask` 在运行时驱动——躲开了「机器上没有聚合 Windows.winmd / 没有 facade 程序集 / 老编译器不支持」的三连坑
-- **设备识别**：`GetIpNetTable` P/Invoke 原始 ARP 表（注意：探测缓冲区大小时 API 按设计返回 122，别当失败）+ 子网广播 ping 促活 + 热点子网动态自适应
-- **编译无需 SDK**：`build.ps1` 直接调 `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`（C# 5.0 语法，代码有意保持兼容），装了 Windows 就能构建
+- **Zero-dependency single exe**: .NET Framework 4.x (in-box on Win10/11) + WinForms, ~58 KB
+- **WinRT fully loaded at runtime**: the tethering API (`NetworkOperatorTetheringManager`) is WinRT; this project references no winmd — everything is driven at runtime through `Type.GetType("..., ContentType=WindowsRuntime")` + `dynamic` + a reflection-invoked `WindowsRuntimeSystemExtensions.AsTask`, avoiding the "no aggregate Windows.winmd / no facade assembly / legacy compiler" triple trap
+- **Device detection**: raw `GetIpNetTable` P/Invoke (careful: the sizing probe returns 122 *by design*), subnet broadcast ping to refresh, hotspot subnet auto-adaptation
+- **Build without an SDK**: `build.ps1` invokes the in-box `csc.exe` (C# 5.0 — the code intentionally stays compatible); if you have Windows, you can build
 
-## 从源码构建
+## Build from source
 
 ```
 git clone https://github.com/NormanFxxkingRockwell/share-proxy.git
@@ -56,13 +55,11 @@ cd share-proxy
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-产出 `share.exe`（改个名字就能用）。
+## Known limitations
 
-## 已知限制
-
-- Windows 移动热点要求本机有可用的 WLAN 网卡（有线网 → 热点没问题；无线 → 需网卡支持同一频段并发）
-- 设备列表依赖 ARP 表：设备连接后产生流量才会出现在列表（通常秒级）
-- 界面为中文；如需多语言欢迎 PR
+- Mobile hotspot requires a usable WLAN adapter (wired → hotspot is fine; WiFi → needs same-band concurrency support in the driver)
+- Device list depends on the ARP table: a client shows up once it generates traffic (usually within seconds)
+- UI strings: zh-CN and en are maintained; other languages welcome via PR
 
 ## License
 

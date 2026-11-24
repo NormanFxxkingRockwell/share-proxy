@@ -1,7 +1,8 @@
-﻿// 代理热点共享 (ProxyShare)
-// 共享 0dcloud (Clash TUN) 的代理网络给手机等设备
-// C# 5.0 / .NET Framework 4.x / WinForms + NotifyIcon 托盘常驻
-// WinRT 移动热点 API 全部运行时加载（Type.GetType + dynamic），编译期零 winmd 依赖
+﻿// Proxy Hotspot Share (共享代理)
+// Share your (TUN-proxied) internet as a Windows mobile hotspot.
+// C# 5.0 / .NET Framework 4.x / WinForms + NotifyIcon tray
+// WinRT tethering APIs loaded fully at runtime (Type.GetType + dynamic) - zero winmd references.
+// i18n: zh-CN / en, auto-detect OS language, in-app toggle, persisted in HKCU.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -22,17 +23,47 @@ using Microsoft.Win32;
 
 namespace ProxyShareApp {
 
+  static class I18N {
+    public static string Lang = "zh";
+    public static void Init() {
+      try {
+        object v = Registry.GetValue(@"HKEY_CURRENT_USER\Software\ProxyHotspotShare", "Lang", null);
+        string s = v == null ? "" : v.ToString();
+        if (s == "zh" || s == "en") { Lang = s; return; }
+        Lang = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh" ? "zh" : "en";
+      } catch { Lang = "zh"; }
+    }
+    public static void Toggle() {
+      Lang = Lang == "zh" ? "en" : "zh";
+      Save();
+    }
+    static void Save() {
+      try {
+        using (RegistryKey k = Registry.CurrentUser.CreateSubKey("Software\\ProxyHotspotShare")) {
+          if (k != null) k.SetValue("Lang", Lang);
+        }
+      } catch { }
+    }
+    public static string T(string zh, string en) { return Lang == "zh" ? zh : en; }
+    public static string F(string zh, string en, params object[] args) {
+      return string.Format(Lang == "zh" ? zh : en, args);
+    }
+  }
+
   static class Program {
     [STAThread]
     static void Main() {
+      I18N.Init();
       bool createdNew;
       using (Mutex mux = new Mutex(true, "Local\\ProxyShareAppSingle", out createdNew)) {
         if (!createdNew) {
-          // 已在后台运行：通知现有实例弹出窗口（而不是弹提示框）
           try {
             using (EventWaitHandle ev = EventWaitHandle.OpenExisting("Local\\ProxyShareAppShow")) { ev.Set(); }
           } catch {
-            MessageBox.Show("「共享代理」已在后台运行，请双击托盘里的绿色圆点图标打开界面。", "共享代理", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(I18N.T(
+              "「共享代理」已在后台运行，请双击托盘里的绿色圆点图标打开界面。",
+              "Proxy Hotspot Share is already running. Double-click the green dot icon in the tray to open it."),
+              "Proxy Hotspot", MessageBoxButtons.OK, MessageBoxIcon.Information);
           }
           return;
         }
@@ -57,7 +88,7 @@ namespace ProxyShareApp {
     }
   }
 
-  // ---- WinRT 运行时加载工具 ----
+  // ---- WinRT runtime loading helpers ----
   static class WinRt {
     static Type _ext;
     static Type ExtType() {
@@ -69,7 +100,7 @@ namespace ProxyShareApp {
     }
     public static Type WinType(string fullName) {
       Type t = Type.GetType(fullName + ", Windows.Networking, ContentType=WindowsRuntime");
-      if (t == null) throw new InvalidOperationException("WinRT 类型加载失败: " + fullName);
+      if (t == null) throw new InvalidOperationException("WinRT type load failed: " + fullName);
       return t;
     }
     public static dynamic Await(dynamic asyncOp, string resultTypeName) {
@@ -83,7 +114,7 @@ namespace ProxyShareApp {
         t.Wait(30000);
         return t.Result;
       }
-      throw new InvalidOperationException("AsTask<IAsyncOperation<TResult>> 未找到");
+      throw new InvalidOperationException("AsTask<IAsyncOperation<TResult>> not found");
     }
     public static IEnumerable GetProfiles() {
       Type t = WinType("Windows.Networking.Connectivity.NetworkInformation");
@@ -124,7 +155,7 @@ namespace ProxyShareApp {
     public string Ip; public string Mac; public string State; public int Type;
   }
 
-  // 热点子网动态检测（默认 ICS 为 192.168.137.0/24，随 Wi-Fi Direct 虚拟网卡实际地址自适应）
+  // Hotspot subnet auto-detection (ICS default 192.168.137.0/24, follows Wi-Fi Direct virtual adapter)
   static class HotspotNet {
     public static byte A = 192, B = 168, C = 137;
     static DateTime _last = DateTime.MinValue;
@@ -169,7 +200,7 @@ namespace ProxyShareApp {
       uint size = 0;
       uint rc = GetIpNetTable(IntPtr.Zero, ref size, false);
       if (size == 0 || size > 8u * 1024 * 1024) return list;
-      if (rc != 0 && rc != 122) return list; // 122=ERROR_INSUFFICIENT_BUFFER，探测大小时的预期返回值
+      if (rc != 0 && rc != 122) return list; // 122=ERROR_INSUFFICIENT_BUFFER is the expected probe result
       IntPtr buf = Marshal.AllocHGlobal((int)size);
       try {
         if (GetIpNetTable(buf, ref size, true) == 0) {
@@ -184,7 +215,6 @@ namespace ProxyShareApp {
       return list;
     }
 
-    // 热点子网客户端：排除网关/广播，仅排除 Invalid(2)
     public static List<DeviceRow> HotspotClients() {
       List<DeviceRow> res = new List<DeviceRow>();
       foreach (MIB_IPNETROW r in Rows()) {
@@ -197,13 +227,13 @@ namespace ProxyShareApp {
         int len = (int)Math.Min(r.PhysAddrLen, 8u);
         for (int i = 0; i < len; i++) mac += r.PhysAddr[i].ToString("X2") + (i < len - 1 ? "-" : "");
         if (mac.Length == 0) mac = "—";
-        res.Add(new DeviceRow { Ip = new IPAddress(b).ToString(), Mac = mac, State = "在线", Type = (int)r.Type });
+        res.Add(new DeviceRow { Ip = new IPAddress(b).ToString(), Mac = mac, State = I18N.T("在线", "online"), Type = (int)r.Type });
       }
       return res;
     }
   }
 
-  // ---- 移动热点控制（WinRT dynamic）----
+  // ---- Mobile hotspot control (WinRT dynamic) ----
   static class Tethering {
     static dynamic _mgr;
     static object _lk = new object();
@@ -268,27 +298,28 @@ namespace ProxyShareApp {
     }
 
     public static string StateText(dynamic mgr) {
-      if (mgr == null) return "无管理器";
+      if (mgr == null) return "no manager";
       try { return mgr.TetheringOperationalState.ToString(); } catch { return "?"; }
     }
 
     public static string Start(dynamic mgr) {
-      if (mgr == null) return "开启失败：没有可共享的网络连接";
+      if (mgr == null) return I18N.T("开启失败：没有可共享的网络连接", "Start failed: no internet connection to share");
       try {
         dynamic r = WinRt.Await(mgr.StartTetheringAsync(), OpResult);
-        if (r == null) return "开启结果未知";
-        if (r.Status.ToString() == "Success") return "热点已开启 ✔";
-        return "开启失败：" + r.Status.ToString() + " " + (r.AdditionalErrorMessage ?? "");
-      } catch (Exception ex) { return "开启异常：" + ex.Message; }
+        if (r == null) return I18N.T("开启结果未知", "Start result unknown");
+        if (r.Status.ToString() == "Success") return I18N.T("热点已开启 ✔", "Hotspot started ✔");
+        return I18N.F("开启失败：{0} {1}", "Start failed: {0} {1}", r.Status.ToString(), (r.AdditionalErrorMessage ?? ""));
+      } catch (Exception ex) { return I18N.T("开启异常：", "Start error: ") + ex.Message; }
     }
 
     public static string Stop(dynamic mgr) {
-      if (mgr == null) return "管理器不可用";
+      if (mgr == null) return I18N.T("管理器不可用", "Tethering manager unavailable");
       try {
         dynamic r = WinRt.Await(mgr.StopTetheringAsync(), OpResult);
-        if (r == null) return "关闭结果未知";
-        return r.Status.ToString() == "Success" ? "热点已关闭 ■" : "关闭失败：" + r.Status.ToString();
-      } catch (Exception ex) { return "关闭异常：" + ex.Message; }
+        if (r == null) return I18N.T("关闭结果未知", "Stop result unknown");
+        return r.Status.ToString() == "Success" ? I18N.T("热点已关闭 ■", "Hotspot stopped ■")
+          : I18N.F("关闭失败：{0}", "Stop failed: {0}", r.Status.ToString());
+      } catch (Exception ex) { return I18N.T("关闭异常：", "Stop error: ") + ex.Message; }
     }
 
     static bool IsAscii(string s) {
@@ -298,10 +329,10 @@ namespace ProxyShareApp {
 
     public static string ApplyConfig(dynamic mgr, string ssid, string pass, out bool applied) {
       applied = false;
-      if (mgr == null) return "管理器不可用（先开启一次热点）";
-      if (string.IsNullOrWhiteSpace(ssid)) return "热点名不能为空";
-      if (pass == null || pass.Length < 8 || pass.Length > 63) return "密码长度需 8～63 位";
-      if (!IsAscii(ssid) || !IsAscii(pass)) return "名称与密码请用英文数字符号（ASCII）";
+      if (mgr == null) return I18N.T("管理器不可用（先开启一次热点）", "Manager unavailable (start sharing once)");
+      if (string.IsNullOrWhiteSpace(ssid)) return I18N.T("热点名不能为空", "Hotspot name cannot be empty");
+      if (pass == null || pass.Length < 8 || pass.Length > 63) return I18N.T("密码长度需 8～63 位", "Password must be 8-63 characters");
+      if (!IsAscii(ssid) || !IsAscii(pass)) return I18N.T("名称与密码请用英文数字符号（ASCII）", "Name and password must be ASCII");
       bool wasOn = IsOn(mgr);
       try {
         Type ct = WinRt.WinType("Windows.Networking.NetworkOperators.NetworkOperatorTetheringAccessPointConfiguration");
@@ -309,7 +340,7 @@ namespace ProxyShareApp {
         WinRt.SetProp(cfg, "Ssid", ssid);
         WinRt.SetProp(cfg, "Passphrase", pass);
         try { WinRt.Await(mgr.ConfigureAccessPointAsync(cfg), OpResult); }
-        catch { /* 个别环境投影异常，但操作本身已派发 */ }
+        catch { /* some projections throw after the op was dispatched anyway */ }
         Thread.Sleep(600);
         object cur = WinRt.Call(mgr, "GetCurrentAccessPointConfiguration");
         if (cur != null) {
@@ -317,21 +348,21 @@ namespace ProxyShareApp {
           string cp = WinRt.GetStrProp(cur, "Passphrase");
           if (cs == ssid && cp == pass) applied = true;
         }
-        if (!applied) return "设置未生效（读取回执不匹配）";
+        if (!applied) return I18N.T("设置未生效（读取回执不匹配）", "Settings not applied (verification mismatch)");
         if (wasOn) {
           Stop(mgr);
           Thread.Sleep(1500);
           string rs = Start(mgr);
-          return "已保存并重启热点：" + rs;
+          return I18N.T("已保存并重启热点：", "Saved, hotspot restarted: ") + rs;
         }
-        return "已保存（下次开启热点时生效）";
-      } catch (Exception ex) { return "设置异常：" + ex.Message; }
+        return I18N.T("已保存（下次开启热点时生效）", "Saved (takes effect on next start)");
+      } catch (Exception ex) { return I18N.T("设置异常：", "Config error: ") + ex.Message; }
     }
   }
 
   class MainForm : Form {
     Label lblState, lblShareSrc, lblUpstream, lblProxy, lblSysProxy, lblSpeed;
-    Button btnToggle, btnSave;
+    Button btnToggle, btnSave, btnLang;
     TextBox txtSsid, txtPass;
     GroupBox grpHotspot, grpNet, grpDevices;
     ListView lvDevices;
@@ -341,9 +372,10 @@ namespace ProxyShareApp {
     System.Windows.Forms.Timer uiTimer, netTimer, devTimer, bootTimer;
     NotifyIcon ni;
     ContextMenuStrip trayMenu;
-    ToolStripMenuItem miToggle;
+    ToolStripMenuItem miOpen, miToggle, miExitKeep, miExitStop;
+    Label lName, lPass;
 
-    bool desiredOn = true;     // 双击打开即自动共享
+    bool desiredOn = true;
     bool busy = false;
     bool cfgDirty = false;
     bool realExit = false;
@@ -361,7 +393,6 @@ namespace ProxyShareApp {
     static Icon _iconOn, _iconOff;
 
     public MainForm() {
-      Text = "共享代理 · Proxy Hotspot";
       FormBorderStyle = FormBorderStyle.FixedSingle;
       MaximizeBox = false;
       StartPosition = FormStartPosition.CenterScreen;
@@ -375,29 +406,26 @@ namespace ProxyShareApp {
       Controls.Add(lblState);
       Controls.Add(lblShareSrc);
       btnToggle = new Button();
-      btnToggle.Text = "开启共享";
       btnToggle.Location = new System.Drawing.Point(412, 14);
       btnToggle.Size = new System.Drawing.Size(108, 34);
       btnToggle.Click += new EventHandler(OnToggle);
       Controls.Add(btnToggle);
 
       grpHotspot = new GroupBox();
-      grpHotspot.Text = "热点设置";
       grpHotspot.Location = new System.Drawing.Point(12, 78);
       grpHotspot.Size = new System.Drawing.Size(512, 68);
-      Label l1 = MkLabel(12, 27, 46, 20, 9F, false); l1.Text = "名称:"; grpHotspot.Controls.Add(l1);
+      lName = MkLabel(12, 27, 46, 20, 9F, false); grpHotspot.Controls.Add(lName);
       txtSsid = new TextBox(); txtSsid.Location = new System.Drawing.Point(58, 23); txtSsid.Width = 120;
       txtSsid.TextChanged += new EventHandler(MarkDirty); grpHotspot.Controls.Add(txtSsid);
-      Label l2 = MkLabel(192, 27, 40, 20, 9F, false); l2.Text = "密码:"; grpHotspot.Controls.Add(l2);
+      lPass = MkLabel(192, 27, 40, 20, 9F, false); grpHotspot.Controls.Add(lPass);
       txtPass = new TextBox(); txtPass.Location = new System.Drawing.Point(234, 23); txtPass.Width = 120;
       txtPass.TextChanged += new EventHandler(MarkDirty); grpHotspot.Controls.Add(txtPass);
-      btnSave = new Button(); btnSave.Text = "保存并应用";
+      btnSave = new Button();
       btnSave.Location = new System.Drawing.Point(372, 21); btnSave.Size = new System.Drawing.Size(126, 27);
       btnSave.Click += new EventHandler(OnSave); grpHotspot.Controls.Add(btnSave);
       Controls.Add(grpHotspot);
 
       grpNet = new GroupBox();
-      grpNet.Text = "网络与代理状态";
       grpNet.Location = new System.Drawing.Point(12, 154);
       grpNet.Size = new System.Drawing.Size(512, 126);
       lblUpstream = MkLabel(14, 24, 484, 18, 9F, false);
@@ -409,33 +437,38 @@ namespace ProxyShareApp {
       Controls.Add(grpNet);
 
       grpDevices = new GroupBox();
-      grpDevices.Text = "已连接设备（0）";
       grpDevices.Location = new System.Drawing.Point(12, 288);
       grpDevices.Size = new System.Drawing.Size(512, 244);
       lvDevices = new ListView();
       lvDevices.View = View.Details; lvDevices.FullRowSelect = true; lvDevices.ShowItemToolTips = true;
-      lvDevices.Columns.Add("IP 地址", 130); lvDevices.Columns.Add("MAC 地址", 170); lvDevices.Columns.Add("状态", 90);
+      lvDevices.Columns.Add("IP", 130); lvDevices.Columns.Add("MAC", 170); lvDevices.Columns.Add("St", 90);
       lvDevices.Location = new System.Drawing.Point(10, 24); lvDevices.Size = new System.Drawing.Size(490, 208);
       grpDevices.Controls.Add(lvDevices);
       Controls.Add(grpDevices);
 
       chkKeep = new CheckBox();
-      chkKeep.Text = "掉线自动重开（防 5 分钟无设备自动关）";
       chkKeep.Checked = true;
       chkKeep.Location = new System.Drawing.Point(14, 540); chkKeep.Size = new System.Drawing.Size(300, 22);
       Controls.Add(chkKeep);
       chkAuto = new CheckBox();
-      chkAuto.Text = "开机自启";
       chkAuto.Location = new System.Drawing.Point(330, 540); chkAuto.Size = new System.Drawing.Size(110, 22);
       chkAuto.CheckedChanged += new EventHandler(OnAutoStartChanged);
       Controls.Add(chkAuto);
+      btnLang = new Button();
+      btnLang.Text = "语言/Lang";
+      btnLang.Location = new System.Drawing.Point(444, 537);
+      btnLang.Size = new System.Drawing.Size(82, 26);
+      btnLang.Click += new EventHandler(OnLangToggle);
+      Controls.Add(btnLang);
 
       status = new StatusStrip();
-      lblMsg = new ToolStripStatusLabel("就绪");
+      lblMsg = new ToolStripStatusLabel();
       status.Items.Add(lblMsg);
       Controls.Add(status);
 
       BuildTray();
+      RebuildTexts();
+      SetStatus(I18N.T("就绪", "Ready"));
 
       uiTimer = new System.Windows.Forms.Timer(); uiTimer.Interval = 1000; uiTimer.Tick += new EventHandler(OnFastTick);
       netTimer = new System.Windows.Forms.Timer(); netTimer.Interval = 3000; netTimer.Tick += new EventHandler(OnSlowTick);
@@ -443,7 +476,7 @@ namespace ProxyShareApp {
       bootTimer = new System.Windows.Forms.Timer(); bootTimer.Interval = 700; bootTimer.Tick += new EventHandler(OnBoot);
       bootTimer.Start();
 
-      // 后台等待“唤醒”信号：再次双击 exe 时弹出窗口
+      // wake channel: re-launching the exe brings the window back
       Thread wake = new Thread(new ThreadStart(delegate {
         try {
           using (EventWaitHandle ev = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\ProxyShareAppShow")) {
@@ -458,22 +491,54 @@ namespace ProxyShareApp {
       wake.IsBackground = true;
       wake.Start();
 
-      Shown += new EventHandler(delegate(object s, EventArgs e) { Log.Write("UI 启动"); });
+      Shown += new EventHandler(delegate(object s, EventArgs e) { Log.Write("UI start"); });
+    }
+
+    void RebuildTexts() {
+      Text = I18N.T("共享代理 · Proxy Hotspot", "Proxy Hotspot Share");
+      grpHotspot.Text = I18N.T("热点设置", "Hotspot settings");
+      lName.Text = I18N.T("名称:", "Name:");
+      lPass.Text = I18N.T("密码:", "Password:");
+      btnSave.Text = I18N.T("保存并应用", "Save & apply");
+      grpNet.Text = I18N.T("网络与代理状态", "Network & proxy status");
+      chkKeep.Text = I18N.T("掉线自动重开（防 5 分钟无设备自动关）", "Auto-restart (prevent Windows auto-off)");
+      chkAuto.Text = I18N.T("开机自启", "Start with Windows");
+      btnLang.Text = "语言/Lang";
+      miOpen.Text = I18N.T("打开主界面(&O)", "Open(&O)");
+      miExitKeep.Text = I18N.T("退出（保持热点）", "Exit (keep hotspot)");
+      miExitStop.Text = I18N.T("退出并关闭热点", "Exit & stop hotspot");
+      ni.Text = I18N.T("共享代理", "Proxy Hotspot");
+      RebuildColumns();
+      RefreshAll();
+    }
+
+    void RebuildColumns() {
+      lvDevices.Columns[0].Text = I18N.T("IP 地址", "IP address");
+      lvDevices.Columns[1].Text = I18N.T("MAC 地址", "MAC address");
+      lvDevices.Columns[2].Text = I18N.T("状态", "Status");
+    }
+
+    void OnLangToggle(object s, EventArgs e) {
+      I18N.Toggle();
+      Log.Write("language -> " + I18N.Lang);
+      RebuildTexts();
+      LoadCurrentConfig();
+      SetStatus(I18N.T("已切换语言", "Language switched"));
     }
 
     void BuildTray() {
       trayMenu = new ContextMenuStrip();
-      ToolStripMenuItem miOpen = new ToolStripMenuItem("打开主界面(&O)");
+      miOpen = new ToolStripMenuItem();
       miOpen.Click += new EventHandler(delegate(object s, EventArgs e) { Show(); Activate(); });
-      miToggle = new ToolStripMenuItem("开启共享");
+      miToggle = new ToolStripMenuItem();
       miToggle.Click += new EventHandler(OnToggle);
-      ToolStripMenuItem miExitKeep = new ToolStripMenuItem("退出（保持热点）");
+      miExitKeep = new ToolStripMenuItem();
       miExitKeep.Click += new EventHandler(delegate(object s, EventArgs e) {
         realExit = true;
         try { ni.Visible = false; } catch { }
         Close();
       });
-      ToolStripMenuItem miExitStop = new ToolStripMenuItem("退出并关闭热点");
+      miExitStop = new ToolStripMenuItem();
       miExitStop.Click += new EventHandler(OnExitStop);
       trayMenu.Items.Add(miOpen);
       trayMenu.Items.Add(miToggle);
@@ -483,18 +548,17 @@ namespace ProxyShareApp {
 
       ni = new NotifyIcon();
       ni.Icon = DotIcon(false);
-      ni.Text = "共享代理";
       ni.ContextMenuStrip = trayMenu;
       ni.Visible = true;
       ni.DoubleClick += new EventHandler(delegate(object s, EventArgs e) { Show(); Activate(); });
     }
 
     void OnExitStop(object s, EventArgs e) {
-      SetStatus("正在关闭热点并退出…");
+      SetStatus(I18N.T("正在关闭热点并退出…", "Stopping hotspot & exiting…"));
       dynamic mgr = Tethering.GetManager(false);
       Task<string> t = Task.Run(new Func<string>(delegate { return Tethering.Stop(mgr); }));
-      try { t.Wait(8000); Log.Write("退出并关闭热点 -> " + t.Result); }
-      catch { Log.Write("退出并关闭热点 -> 超时/异常"); }
+      try { t.Wait(8000); Log.Write("exit & stop -> " + t.Result); }
+      catch { Log.Write("exit & stop -> timeout/error"); }
       realExit = true;
       try { ni.Visible = false; } catch { }
       Close();
@@ -534,14 +598,17 @@ namespace ProxyShareApp {
       if (!realExit) {
         e.Cancel = true;
         Hide();
-        Log.Write("界面隐藏到托盘（热点与保活继续运行）");
+        Log.Write("hidden to tray (hotspot keeps running)");
         if (!hideTipShown) {
           hideTipShown = true;
-          try { ni.ShowBalloonTip(2500, "共享代理 仍在后台", "热点保持运行，双击托盘绿色圆点图标重新打开界面", ToolTipIcon.Info); } catch { }
+          try { ni.ShowBalloonTip(2500,
+            I18N.T("共享代理 仍在后台", "Still running in background"),
+            I18N.T("热点保持运行，双击托盘绿色圆点图标重新打开界面", "Hotspot keeps running. Double-click the green tray icon to reopen."),
+            ToolTipIcon.Info); } catch { }
         }
         return;
       }
-      Log.Write("程序退出");
+      Log.Write("app exit");
       try { ni.Visible = false; ni.Dispose(); } catch { }
     }
 
@@ -553,10 +620,10 @@ namespace ProxyShareApp {
       dynamic mgr = Tethering.GetManager(false);
       Log.Write("OnBoot: state=" + Tethering.StateText(mgr));
       if (!Tethering.IsOn(mgr)) {
-        SetStatus("正在自动开启共享…");
+        SetStatus(I18N.T("正在自动开启共享…", "Auto-starting sharing…"));
         StartShare();
       } else {
-        SetStatus("热点已在共享中");
+        SetStatus(I18N.T("热点已在共享中", "Hotspot is already sharing"));
       }
       uiTimer.Start(); netTimer.Start(); devTimer.Start();
     }
@@ -564,21 +631,21 @@ namespace ProxyShareApp {
     void LoadCurrentConfig() {
       try {
         dynamic mgr = Tethering.GetManager(false);
-        if (mgr == null) { Log.Write("LoadConfig: 管理器不可用"); return; }
+        if (mgr == null) { Log.Write("LoadConfig: no manager"); return; }
         object cur = WinRt.Call(mgr, "GetCurrentAccessPointConfiguration");
-        if (cur == null) { Log.Write("LoadConfig: 无当前热点配置"); return; }
+        if (cur == null) { Log.Write("LoadConfig: no current config"); return; }
         string s = WinRt.GetStrProp(cur, "Ssid");
         string p2 = WinRt.GetStrProp(cur, "Passphrase");
-        Log.Write("LoadConfig: ssid=" + (s ?? "<null>") + " pass=" + (string.IsNullOrEmpty(p2) ? "<null>" : "(" + p2.Length + "位)"));
+        Log.Write("LoadConfig: ssid=" + (s ?? "<null>") + " pass=" + (string.IsNullOrEmpty(p2) ? "<null>" : "(" + p2.Length + ")"));
         txtSsid.Text = s ?? "";
         txtPass.Text = p2 ?? "";
         curSsid = s ?? "";
         cfgDirty = false;
-      } catch (Exception ex) { Log.Write("LoadConfig 异常: " + ex.ToString()); }
+      } catch (Exception ex) { Log.Write("LoadConfig ex: " + ex.ToString()); }
     }
 
     void OnToggle(object s, EventArgs e) {
-      if (busy) { SetStatus("正在处理，稍候…"); return; }
+      if (busy) { SetStatus(I18N.T("正在处理，稍候…", "Busy, please wait…")); return; }
       dynamic mgr = Tethering.GetManager(false);
       if (Tethering.IsOn(mgr)) { desiredOn = false; StopShare(); }
       else { desiredOn = true; StartShare(); }
@@ -587,11 +654,11 @@ namespace ProxyShareApp {
     void StartShare() {
       busy = true;
       btnToggle.Enabled = false; miToggle.Enabled = false;
-      SetStatus("正在开启热点（共享 0dcloud 代理出口）…");
+      SetStatus(I18N.T("正在开启热点（共享代理出口）…", "Starting hotspot (sharing proxy egress)…"));
       Task.Run(new Action(delegate {
         dynamic mgr = Tethering.GetManager(true);
         string res = Tethering.Start(mgr);
-        Log.Write("StartShare -> " + res + " [share profile: " + (Tethering.ShareProfileName() ?? "null") + "]");
+        Log.Write("StartShare -> " + res + " [profile: " + (Tethering.ShareProfileName() ?? "null") + "]");
         BeginInvoke(new Action(delegate {
           busy = false; btnToggle.Enabled = true; miToggle.Enabled = true;
           lastTry = DateTime.Now;
@@ -604,25 +671,25 @@ namespace ProxyShareApp {
     void StopShare() {
       busy = true;
       btnToggle.Enabled = false; miToggle.Enabled = false;
-      SetStatus("正在关闭热点…");
+      SetStatus(I18N.T("正在关闭热点…", "Stopping hotspot…"));
       Task.Run(new Action(delegate {
         dynamic mgr = Tethering.GetManager(false);
         string res = Tethering.Stop(mgr);
         Log.Write("StopShare -> " + res);
         BeginInvoke(new Action(delegate {
           busy = false; btnToggle.Enabled = true; miToggle.Enabled = true;
-          SetStatus(res + "（设备将断开）");
+          SetStatus(I18N.F("{0}（设备将断开）", "{0} (devices will disconnect)", res));
           RefreshAll();
         }));
       }));
     }
 
     void OnSave(object s, EventArgs e) {
-      if (busy) { SetStatus("正在处理，稍候…"); return; }
+      if (busy) { SetStatus(I18N.T("正在处理，稍候…", "Busy, please wait…")); return; }
       string ssid = txtSsid.Text.Trim();
       string pass = txtPass.Text;
       busy = true; btnToggle.Enabled = false; btnSave.Enabled = false; miToggle.Enabled = false;
-      SetStatus("正在保存热点配置…");
+      SetStatus(I18N.T("正在保存热点配置…", "Saving hotspot settings…"));
       Task.Run(new Action(delegate {
         dynamic mgr = Tethering.GetManager(true);
         bool applied;
@@ -645,39 +712,45 @@ namespace ProxyShareApp {
           if (rk == null) return;
           if (chkAuto.Checked) {
             rk.SetValue("ProxyHotspotShare", "\"" + Application.ExecutablePath + "\"");
-            SetStatus("已设置开机自启");
+            SetStatus(I18N.T("已设置开机自启", "Autostart enabled"));
           } else {
             if (rk.GetValue("ProxyHotspotShare") != null) rk.DeleteValue("ProxyHotspotShare");
-            SetStatus("已取消开机自启");
+            SetStatus(I18N.T("已取消开机自启", "Autostart disabled"));
           }
         }
-      } catch (Exception ex) { SetStatus("自启设置失败：" + ex.Message); }
+      } catch (Exception ex) { SetStatus(I18N.T("自启设置失败：", "Autostart setting failed: ") + ex.Message); }
     }
 
     void OnFastTick(object s, EventArgs e) {
       try {
         dynamic mgr = Tethering.GetManager(false);
         bool on = Tethering.IsOn(mgr);
-        lblState.Text = on ? "● 共享已开启" : "○ 共享已关闭";
+        lblState.Text = on ? I18N.T("● 共享已开启", "● Sharing ON") : I18N.T("○ 共享已关闭", "○ Sharing OFF");
         lblState.ForeColor = on ? Color.Green : Color.Gray;
-        btnToggle.Text = on ? "关闭共享" : "开启共享";
-        miToggle.Text = on ? "关闭共享" : "开启共享";
+        btnToggle.Text = on ? I18N.T("关闭共享", "Stop sharing") : I18N.T("开启共享", "Start sharing");
+        miToggle.Text = btnToggle.Text;
         UpdateShareSrc();
         UpdateSpeed();
-        // 托盘图标/气泡
         try {
           ni.Icon = DotIcon(on);
-          ni.Text = on ? ("共享代理：开启 · " + lastDevCount + " 台设备" + (curSsid.Length > 0 ? " · " + curSsid : "")) : "共享代理：关闭";
+          ni.Text = on
+            ? I18N.F("共享代理：开启 · {0} 台设备", "ProxyHotspot: ON · {0} device(s)", lastDevCount)
+            : I18N.T("共享代理：关闭", "ProxyHotspot: OFF");
         } catch { }
         if (on != lastOn) {
           lastOn = on;
-          try { ni.ShowBalloonTip(1500, on ? "热点已开启" : "热点已关闭",
-                 on ? (curSsid.Length > 0 ? "手机可连接 " + curSsid : "热点已开始广播") : "已连接设备将断开", ToolTipIcon.Info); } catch { }
+          try {
+            string body = on
+              ? (curSsid.Length > 0 ? I18N.F("手机可连接 {0}", "Connect your devices to {0}", curSsid)
+                                    : I18N.T("热点已开始广播", "Hotspot is broadcasting"))
+              : I18N.T("已连接设备将断开", "Connected devices will disconnect");
+            ni.ShowBalloonTip(1500, on ? I18N.T("热点已开启", "Hotspot started") : I18N.T("热点已关闭", "Hotspot stopped"), body, ToolTipIcon.Info);
+          } catch { }
         }
         if (!on && desiredOn && chkKeep.Checked && !busy &&
             (DateTime.Now - lastTry).TotalSeconds > 6) {
           lastTry = DateTime.Now;
-          Log.Write("自动重开热点（状态: " + Tethering.StateText(mgr) + "）");
+          Log.Write("auto re-arm (state: " + Tethering.StateText(mgr) + ")");
           StartShare();
         }
       } catch { }
@@ -704,10 +777,10 @@ namespace ProxyShareApp {
       try {
         NetworkInterface tun = FindTun();
         if (tun != null) {
-          lblShareSrc.Text = "共享出口：" + tun.Name + "（全部流量走代理隧道）";
+          lblShareSrc.Text = I18N.F("共享出口：{0}（全部流量走代理隧道）", "Egress: {0} (all traffic via proxy tunnel)", tun.Name);
           lblShareSrc.ForeColor = Color.FromArgb(60, 120, 60);
         } else {
-          lblShareSrc.Text = "共享出口：直连（未检测到 TUN 代理，仍可共享网络）";
+          lblShareSrc.Text = I18N.T("共享出口：直连（未检测到 TUN 代理，仍可共享网络）", "Egress: direct (no TUN proxy detected, still shareable)");
           lblShareSrc.ForeColor = Color.Gray;
         }
       } catch { }
@@ -746,6 +819,8 @@ namespace ProxyShareApp {
       return "-";
     }
 
+    static readonly int[] ProbePorts = { 7890, 7897, 7891, 17891, 2080, 1080, 10808 };
+
     void UpdateNetInfo() {
       try {
         NetworkInterface wlan = FindNic(delegate(NetworkInterface i) {
@@ -773,23 +848,23 @@ namespace ProxyShareApp {
               break;
             }
           } catch { }
-          lblUpstream.Text = string.Format("上游网络：{0}（WLAN）  信号 {1}/5  IP：{2}",
-            string.IsNullOrEmpty(ssid) ? "(未知)" : ssid, bars, GetIpv4(wlan));
+          lblUpstream.Text = I18N.F("上游网络：{0}（WLAN）  信号 {1}/5  IP：{2}", "Upstream: {0} (WLAN)  signal {1}/5  IP: {2}",
+            string.IsNullOrEmpty(ssid) ? I18N.T("(未知)", "(unknown)") : ssid, bars, GetIpv4(wlan));
         } else {
-          lblUpstream.Text = "上游网络：未检测到 WLAN 连接";
+          lblUpstream.Text = I18N.T("上游网络：未检测到 WLAN 连接", "Upstream: no WLAN connection detected");
         }
 
         NetworkInterface tun = FindTun();
         tunNic = tun;
         if (tun != null) {
-          lblProxy.Text = "代理状态：已开启（TUN：" + tun.Name + "，IP " + GetIpv4(tun) + "）";
+          lblProxy.Text = I18N.F("代理状态：已开启（TUN：{0}，IP {1}）", "Proxy: ON (TUN: {0}, IP {1})", tun.Name, GetIpv4(tun));
           lblProxy.ForeColor = Color.FromArgb(60, 120, 60);
         } else {
-          lblProxy.Text = "代理状态：未检测到代理（将共享直连网络）";
+          lblProxy.Text = I18N.T("代理状态：未检测到代理（将共享直连网络）", "Proxy: not detected (sharing direct connection)");
           lblProxy.ForeColor = Color.Gray;
         }
 
-        string sysProxy = "未设置"; int enable = 0; string server = "";
+        string sysProxy = I18N.T("未设置", "off"); int enable = 0; string server = "";
         try {
           object v = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings", "ProxyEnable", null);
           if (v != null) enable = (int)v;
@@ -801,8 +876,9 @@ namespace ProxyShareApp {
         foreach (int pp in ProbePorts) {
           if (TcpProbe("127.0.0.1", pp, 200)) { alivePort = pp; break; }
         }
-        lblSysProxy.Text = string.Format("系统代理：{0} · 本地核心端口：{1}", sysProxy,
-          alivePort > 0 ? (alivePort + " 活跃 ✔") : "未监听（无代理或非默认端口）");
+        lblSysProxy.Text = I18N.F("系统代理：{0} · 本地核心端口：{1}", "System proxy: {0} · local core port: {1}", sysProxy,
+          alivePort > 0 ? I18N.F("{0} 活跃 ✔", "{0} active ✔", alivePort)
+                        : I18N.T("未监听（无代理或非默认端口）", "not listening (no proxy / non-default port)"));
         lblSysProxy.ForeColor = alivePort > 0 ? Color.FromArgb(60, 120, 60) : Color.Gray;
       } catch { }
     }
@@ -818,20 +894,18 @@ namespace ProxyShareApp {
       } catch { return false; }
     }
 
-    static readonly int[] ProbePorts = { 7890, 7897, 7891, 17891, 2080, 1080, 10808 };
-
     void UpdateSpeed() {
       try {
-        if (tunNic == null) { lblSpeed.Text = "TUN 吞吐：—（无代理网卡）"; return; }
+        if (tunNic == null) { lblSpeed.Text = I18N.T("TUN 吞吐：—（无代理网卡）", "TUN throughput: — (no proxy adapter)"); return; }
         IPv4InterfaceStatistics st = tunNic.GetIPv4Statistics();
         long rx = st.BytesReceived, tx = st.BytesSent;
-        string line = "TUN 吞吐：↓ — ↑ —（累计 ↓ " + FmtBytes(rx) + " ↑ " + FmtBytes(tx) + "，含本机流量）";
+        string line = I18N.F("TUN 吞吐：↓ — ↑ —（累计 ↓ {0} ↑ {1}，含本机流量）", "TUN throughput: ↓ — ↑ — (total ↓ {0} ↑ {1})", FmtBytes(rx), FmtBytes(tx));
         if (lastRx >= 0 && lastTick != DateTime.MinValue) {
           double dt = (DateTime.Now - lastTick).TotalSeconds;
           if (dt > 0.2) {
             double rxd = (rx - lastRx) / dt, txd = (tx - lastTx) / dt;
             if (rxd >= 0 && txd >= 0)
-              line = string.Format("TUN 吞吐：↓ {0}/s ↑ {1}/s（累计 ↓ {2} ↑ {3}，含本机流量）",
+              line = I18N.F("TUN 吞吐：↓ {0}/s ↑ {1}/s（累计 ↓ {2} ↑ {3}，含本机流量）", "TUN throughput: ↓ {0}/s ↑ {1}/s (total ↓ {2} ↑ {3})",
                 FmtRate(rxd), FmtRate(txd), FmtBytes(rx), FmtBytes(tx));
           }
         }
@@ -869,16 +943,16 @@ namespace ProxyShareApp {
         HotspotNet.Refresh();
         RefreshArp();
         List<DeviceRow> devs = Arp.HotspotClients();
-        // 变化检测 + 日志/气泡
         HashSet<string> now = new HashSet<string>();
         foreach (DeviceRow d in devs) now.Add(d.Ip);
         if (!now.SetEquals(lastDevices)) {
           List<string> parts = new List<string>();
           foreach (DeviceRow d in devs) parts.Add(d.Ip + "(type" + d.Type + "," + d.Mac + ")");
-          Log.Write("设备变化: " + devs.Count + " 台 [" + string.Join("; ", parts.ToArray()) + "]");
+          Log.Write("devices changed: " + devs.Count + " [" + string.Join("; ", parts.ToArray()) + "]");
           foreach (string ip in now) {
             if (!lastDevices.Contains(ip)) {
-              try { ni.ShowBalloonTip(2000, "设备接入", ip + " 已连上热点", ToolTipIcon.Info); } catch { }
+              try { ni.ShowBalloonTip(2000, I18N.T("设备接入", "Device connected"),
+                I18N.F("{0} 已连上热点", "{0} joined the hotspot", ip), ToolTipIcon.Info); } catch { }
             }
           }
           lastDevices = now;
@@ -887,7 +961,7 @@ namespace ProxyShareApp {
         lvDevices.BeginUpdate();
         lvDevices.Items.Clear();
         if (devs.Count == 0) {
-          ListViewItem it = new ListViewItem("（暂无设备连接）");
+          ListViewItem it = new ListViewItem(I18N.T("（暂无设备连接）", "(no devices connected)"));
           it.SubItems.Add(""); it.SubItems.Add("");
           it.ForeColor = Color.Gray;
           lvDevices.Items.Add(it);
@@ -900,7 +974,7 @@ namespace ProxyShareApp {
           }
         }
         lvDevices.EndUpdate();
-        grpDevices.Text = string.Format("已连接设备（{0}）", devs.Count);
+        grpDevices.Text = I18N.F("已连接设备（{0}）", "Connected devices ({0})", devs.Count);
       } catch { }
     }
 
